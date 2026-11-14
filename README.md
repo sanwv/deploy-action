@@ -30,7 +30,9 @@ The `target` input is the deployment root. The Action manages this structure:
 
 Each run uploads `source` to a new release directory. Once the release is ready, the Action atomically updates `current` and prunes old releases according to `releases_to_keep`. Configure the web server document root to use `target/current`.
 
-For incremental deployments, the Action keeps a complete project copy in `target/shared/.shared-copy/`. Rsync checks file contents against this copy and transfers only differences; after synchronization, it copies the cache into the new release while holding a remote `flock` lock. Releases have independent files, so editing an old release cannot change a new one. The first deployment has no cache and uploads the full tree. `.shared-copy` is reserved and cannot be declared in `shared_items`; it uses roughly one extra project copy of disk space. Activation and pruning are also serialized with `flock`.
+For incremental deployments, the Action keeps a complete project copy in `target/shared/.shared-copy/`. Rsync uses file size and modification time to detect changes and compresses transferred data. Files with unchanged size and modification time are not compared by content. After synchronization, the cache is copied into the new release while holding a remote `flock` lock. Releases have independent files, so editing an old release cannot change a new one. The first deployment has no cache and uploads the full tree. `.shared-copy` is reserved and cannot be declared in `shared_items`; it uses roughly one extra project copy of disk space. Activation and pruning are also serialized with `flock`.
+
+New release files belong to the SSH deployment user and use its default group (or the directory's inherited group). Source ownership is not preserved; existing cache and shared items are not recursively re-owned. Ensure the deployment user can read the cache and the web server can read the release. The Action logs stage durations, remote copy time, rsync transfer statistics, and the failing stage without printing secret inputs.
 
 Before the symlink switch, a failed deployment leaves `current` pointing to the previous release. For an atomic switch, `target/current` and `target/releases` must be on the same filesystem.
 
@@ -195,7 +197,7 @@ On each deployment, the Action updates the shared file from `GITHUB_WORKSPACE/sh
 | `target` | Yes | — | Remote deployment root directory. |
 | `releases_to_keep` | No | `5` | Number of releases to retain after deployment (`1`–`100`). The active release is always retained. |
 | `shared_items` | No | Empty | Shared paths, permissions, and file synchronization rules. |
-| `script_before` | No | Empty | Bash script run remotely before creating a release. |
+| `script_before` | No | Empty | Bash script run remotely before synchronizing a release. |
 | `script_before_activate` | No | Empty | Bash script run remotely after release preparation and before switching `current`. |
 | `script_after` | No | Empty | Bash script run remotely after switching `current` and before pruning old releases. Failure restores the previous `current`. |
 
@@ -211,7 +213,7 @@ All three script inputs run as Bash on the deployment server. The scripts can us
 | `DEPLOY_PREVIOUS_RELEASE` | Release previously referenced by `current`; empty on the first deployment. |
 | `DEPLOY_HOOK` | Current phase: `before`, `before-activate`, or `after`. |
 
-`script_before` runs after the remote base directories are prepared and before the release is created. Use it for disk-space, permission, or service checks. `script_before_activate` runs after synchronization and shared-link setup; its working directory is the candidate release. Either script failing aborts deployment while the previous release remains active.
+Release IDs use UTC timestamps in `YYYYMMDDHHMMSSZ` format. A release directory is reserved before `script_before`; another deployment using the same ID fails instead of sharing it. `script_before` runs before synchronization and can check disk space, permissions, or services. `script_before_activate` runs after synchronization and shared-link setup; its working directory is the candidate release. Either script failing aborts deployment while the previous release remains active.
 
 `script_after` runs after switching `current`, from the new release directory. Old releases are pruned only after it succeeds. On failure, the Action atomically restores `current` to `DEPLOY_PREVIOUS_RELEASE` while holding the deployment lock, retains the old release, and fails the deployment. On a first deployment, it removes the newly created `current` link. External state such as database changes is not rolled back and must remain compatible with the previous release.
 

@@ -30,7 +30,9 @@
 
 每次运行都会将 `source` 上传到新的 release 目录。准备完成后，Action 原子更新 `current`，并根据 `releases_to_keep` 清理旧版本。Web 服务器的网站根目录应指向 `target/current`。
 
-增量发布时，Action 在 `target/shared/.shared-copy/` 保存最近一次同步的完整项目副本。rsync 以此副本为目标，校验文件内容并只传输差异；传输成功后，在同一 rsync 接收进程持有远端 `flock` 锁期间，将副本复制到新的 release。release 文件彼此独立，不共享硬链接，因此直接调试或修改旧 release 不会改动新版本。首次部署没有副本，会完整上传。`.shared-copy` 是 Action 保留的路径，不能在 `shared_items` 中声明；它会占用约一份项目大小的磁盘空间。激活和清理也通过远端 `flock` 串行处理。
+增量发布时，Action 在 `target/shared/.shared-copy/` 保存最近一次同步的完整项目副本。rsync 根据文件大小和修改时间判断变化，并压缩传输数据；大小和修改时间均未变化的文件不会比较内容。传输成功后，在远端 `flock` 锁期间将副本复制到新的 release。release 文件彼此独立，不共享硬链接，因此直接调试或修改旧 release 不会改动新版本。首次部署没有副本，会完整上传。`.shared-copy` 是 Action 保留的路径，不能在 `shared_items` 中声明；它会占用约一份项目大小的磁盘空间。激活和清理也通过远端 `flock` 串行处理。
+
+新 release 文件归 SSH 部署用户，属组采用用户默认组或目录继承的组，不保留来源属主；已有缓存和 shared 文件不会被递归修改属主。请确保部署用户可以读取缓存，Web 服务用户可以读取 release。日志包含各阶段耗时、远端复制耗时、rsync 传输统计和失败阶段，不输出敏感输入。
 
 切换符号链接前发生错误时，`current` 仍指向上一个版本。为保证原子切换，`target/current` 和 `target/releases` 必须位于同一个文件系统。
 
@@ -195,7 +197,7 @@ type=file,path=assets/managed-manifest.json,mode=644,from=shared-seed/manifest.j
 | `target` | 是 | — | 远端部署根目录。 |
 | `releases_to_keep` | 否 | `5` | 发布后保留的 release 数量，允许 `1` 到 `100`；活动版本始终保留。 |
 | `shared_items` | 否 | 空 | shared 路径、权限和文件同步配置。 |
-| `script_before` | 否 | 空 | 在远端创建新 release 前执行的 Bash 脚本。 |
+| `script_before` | 否 | 空 | 在远端同步新 release 前执行的 Bash 脚本。 |
 | `script_before_activate` | 否 | 空 | 在远端新 release 准备完成、切换 `current` 前执行的 Bash 脚本。 |
 | `script_after` | 否 | 空 | 在远端切换 `current` 后、清理旧 release 前执行的 Bash 脚本。失败时恢复之前的 `current`。 |
 
@@ -211,7 +213,7 @@ type=file,path=assets/managed-manifest.json,mode=644,from=shared-seed/manifest.j
 | `DEPLOY_PREVIOUS_RELEASE` | 部署前 `current` 指向的 release；首次部署为空。 |
 | `DEPLOY_HOOK` | 当前钩子阶段：`before`、`before-activate` 或 `after`。 |
 
-`script_before` 在远端基础目录准备后、创建 release 前运行，适合检查磁盘空间、权限或服务状态。`script_before_activate` 在代码同步、shared 链接准备完成后运行，当前工作目录是候选 release，可用于校验候选文件或执行激活前命令。任一脚本返回非零都会中止部署，旧版本继续服务。
+Release ID 使用 UTC 时间的 `YYYYMMDDHHMMSSZ` 格式。Action 在 `script_before` 前预留 release 目录；同一 ID 的另一部署会失败，避免共用目录。`script_before` 在同步前运行，适合检查磁盘空间、权限或服务状态。`script_before_activate` 在代码同步、shared 链接准备完成后运行，当前工作目录是候选 release，可用于校验候选文件或执行激活前命令。任一脚本返回非零都会中止部署，旧版本继续服务。
 
 `script_after` 在切换 `current` 后运行，当前工作目录是新 release；成功后才清理旧 release。若脚本失败，Action 会在发布锁内将 `current` 原子恢复到 `DEPLOY_PREVIOUS_RELEASE`，保留旧版本并让部署失败。首次部署时若脚本失败，则移除新建的 `current` 链接。应用数据库等外部状态不随代码回滚，相关操作应自行保证兼容性。
 

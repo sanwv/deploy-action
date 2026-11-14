@@ -2,6 +2,11 @@
 set -Eeuo pipefail
 
 fail() { printf 'deploy-action: %s\n' "$*" >&2; exit 1; }
+deploy_start=$SECONDS
+stage='initialization'
+stage_start=$SECONDS
+stage_begin() { stage=$1; stage_start=$SECONDS; printf 'deploy-action: starting %s\n' "$stage"; }
+stage_end() { printf 'deploy-action: finished %s in %ss\n' "$stage" "$((SECONDS - stage_start))"; stage=''; }
 for cmd in bash ssh rsync base64 realpath; do command -v "$cmd" >/dev/null 2>&1 || fail "required command not found: $cmd"; done
 
 workspace=$(cd -- "${GITHUB_WORKSPACE:-$PWD}" && pwd -P)
@@ -49,7 +54,7 @@ upload_hook() {
   [[ -n "$body" ]] || { printf ''; return 0; }
   path="$target/.deploy-action-hook-$release_id-$name"
   printf '%s\n' "$body" > "$tmpdir/hook-$name"
-  rsync -a -e "$rsync_ssh" -- "$tmpdir/hook-$name" "$user@$rsync_host:$path"
+  rsync -a --no-owner --no-group -e "$rsync_ssh" -- "$tmpdir/hook-$name" "$user@$rsync_host:$path"
   printf '%s' "$path"
 }
 
@@ -120,7 +125,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   seen[$path]=1; types+=("$type"); paths+=("$path"); modes+=("$mode"); froms+=("$from"); syncs+=("$sync")
 done <<< "${INPUT_SHARED_ITEMS:-}"
 
-release_id="$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
+release_id="$(date -u +%Y%m%d%H%M%SZ)"
 [[ "$release_id" =~ ^[A-Za-z0-9._-]+$ ]] || fail 'generated release ID is invalid'
 remote_records="$target/.deploy-action-shared-$release_id"
 remote_cache="$target/shared/.shared-copy"
@@ -148,13 +153,18 @@ REMOTE
 )
   ssh_run bash -s -- "$target" "$release_id" <<< "$script" >/dev/null 2>&1 || true
 }
-trap 'cleanup_release; cleanup' EXIT
+on_exit() {
+  local status=$?
+  if ((status != 0)); then printf 'deploy-action: failed during %s after %ss (exit %s)\n' "${stage:-deployment}" "$((SECONDS - stage_start))" "$status" >&2; fi
+  cleanup_release
+  cleanup
+}
+trap on_exit EXIT
 
 prepare_script=$(cat <<'REMOTE'
 set -Eeuo pipefail
 target=$1; id=$2
 mkdir -p -- "$target/releases" "$target/shared"
-[[ ! -e "$target/releases/$id" ]] || { echo 'release already exists' >&2; exit 1; }
 if [[ -L "$target/current" ]]; then
   previous=$(realpath -e -- "$target/current")
   releases_root=$(realpath -e -- "$target/releases")
@@ -168,17 +178,25 @@ fi
   [[ ! -L "$cache" ]] || { echo 'deployment cache may not be a symlink' >&2; exit 1; }
   [[ ! -e "$cache" || -d "$cache" ]] || { echo 'deployment cache is not a directory' >&2; exit 1; }
   mkdir -p -- "$cache"
+mkdir -- "$target/releases/$id" || { echo 'release already exists or cannot be created' >&2; exit 1; }
 printf '%s\n' "${previous:-}"
 REMOTE
 )
+printf 'deploy-action: release %s; shared items: %s\n' "$release_id" "${#paths[@]}"
+stage_begin 'remote preparation'
 previous_release=$(ssh_run bash -s -- "$target" "$release_id" <<< "$prepare_script")
 release_created=1
+stage_end
+stage_begin 'before hook'
 before_hook=$(upload_hook before "${INPUT_SCRIPT_BEFORE:-}")
 run_remote_hook before "$before_hook" "$target" "$previous_release"
-ssh_run mkdir -p -- "$target/releases/$release_id"
-rsync_path="flock -x $target/.deploy.lock bash -c 'rsync \"\$@\" && cp -a -- \"$remote_cache/.\" \"$target/releases/$release_id/\"' deploy-rsync"
-rsync -a --delete --checksum --compress --rsync-path="$rsync_path" -e "$rsync_ssh" -- "$source_dir/" "$user@$rsync_host:$remote_cache/"
-rsync -a -e "$rsync_ssh" -- "$records" "$user@$rsync_host:$remote_records"
+stage_end
+stage_begin 'rsync and release copy'
+rsync_path="flock -x $target/.deploy.lock bash -c 'rsync \"\$@\" && { SECONDS=0; cp -a --no-preserve=ownership -- \"$remote_cache/.\" \"$target/releases/$release_id/\" && printf \"deploy-action: remote release copy completed in %ss\\n\" \"\$SECONDS\" >&2; }' deploy-rsync"
+rsync -a --no-owner --no-group --delete --compress --stats --rsync-path="$rsync_path" -e "$rsync_ssh" -- "$source_dir/" "$user@$rsync_host:$remote_cache/"
+stage_end
+stage_begin 'shared items'
+rsync -a --no-owner --no-group -e "$rsync_ssh" -- "$records" "$user@$rsync_host:$remote_records"
 
 prepare_shared=$(cat <<'REMOTE'
 set -Eeuo pipefail
@@ -220,7 +238,7 @@ REMOTE
     state=$(ssh_run bash -s -- "$target" "$path" <<< "$exists_script")
     [[ "$state" == PRESENT ]] && continue
   fi
-  rsync -a -e "$rsync_ssh" -- "$workspace/$from" "$user@$rsync_host:$remote_tmp"
+  rsync -a --no-owner --no-group -e "$rsync_ssh" -- "$workspace/$from" "$user@$rsync_host:$remote_tmp"
   finish_sync=$(cat <<'REMOTE'
 set -Eeuo pipefail
 target=$1; path=$2; tmp=$3; sync=$4; mode=$5; dest="$target/shared/$path"
@@ -260,8 +278,11 @@ done < "$records"
 REMOTE
 )
 ssh_run bash -s -- "$target" "$remote_records" "$release_id" <<< "$link_shared"
+stage_end
+stage_begin 'before-activate hook'
 before_activate_hook=$(upload_hook before-activate "${INPUT_SCRIPT_BEFORE_ACTIVATE:-}")
 run_remote_hook before-activate "$before_activate_hook" "$target/releases/$release_id" "$previous_release"
+stage_end
 
 finalize=$(cat <<'REMOTE'
 set -Eeuo pipefail
@@ -304,8 +325,10 @@ done
 rm -f -- "$records"
 REMOTE
 )
+stage_begin 'activation, after hook, and cleanup'
 after_hook=$(upload_hook after "${INPUT_SCRIPT_AFTER:-}")
 ssh_run bash -s -- "$target" "$release_id" "$keep" "$remote_records" "${previous_release:-__STATIC_DEPLOY_EMPTY__}" "${after_hook:-__STATIC_DEPLOY_EMPTY__}" <<< "$finalize"
 activated=1
+stage_end
 trap cleanup EXIT
-printf 'deploy-action: activated release %s\n' "$release_id"
+printf 'deploy-action: activated release %s in %ss\n' "$release_id" "$((SECONDS - deploy_start))"

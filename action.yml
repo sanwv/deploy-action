@@ -30,7 +30,7 @@ inputs:
     required: false
     default: ''
   script_before:
-    description: Remote shell script run before creating a release
+    description: Remote shell script run before synchronizing a release
     required: false
     default: ''
   script_before_activate:
