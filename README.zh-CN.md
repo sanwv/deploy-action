@@ -57,13 +57,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: sanwv/rollback-action@v1
+      - uses: sanwv/rollback-action@v2
         with:
           ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
           ssh_known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
-          remote_host: ${{ vars.REMOTE_HOST }}
-          remote_user: ${{ vars.REMOTE_USER }}
-          remote_port: ${{ vars.REMOTE_PORT }}
+          ssh_host: ${{ vars.SSH_HOST }}
           target: /srv/www/my-site
           steps: 1
 ```
@@ -78,9 +76,7 @@ jobs:
 |---|---|---|
 | `SSH_PRIVATE_KEY` | Secret | 可登录部署服务器的 SSH 私钥。 |
 | `SSH_KNOWN_HOSTS` | 可选 Secret 或 Variable | 经过核验的服务器 host key，格式与 `known_hosts` 文件一致。不配置时，SSH 使用 `accept-new` 并将首次连接的 host key 保存到 Runner 用户的 known_hosts。 |
-| `REMOTE_HOST` | Variable | 服务器主机名或 IP 地址。 |
-| `REMOTE_USER` | Variable | SSH 登录用户。 |
-| `REMOTE_PORT` | 可选 Variable | SSH 端口，默认 `22`。 |
+| `SSH_HOST` | Variable | SSH 连接目标，例如 `deploy@example.com:2222`；端口默认为 `22`。 |
 
 配置该项时，请通过可信渠道核验服务器 host key，Action 会要求精确匹配。不配置时，SSH 会接受并保存首次遇到的 host key；如果 known_hosts 中已有该主机但 key 发生变化，连接仍会失败。
 
@@ -109,14 +105,12 @@ jobs:
           npm run build
 
       - name: Deploy
-        uses: sanwv/deploy-action@v1
+        uses: sanwv/deploy-action@v2
         with:
           ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
           # 可选：省略时 SSH 使用 StrictHostKeyChecking=accept-new。
           ssh_known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
-          remote_host: ${{ vars.REMOTE_HOST }}
-          remote_user: ${{ vars.REMOTE_USER }}
-          remote_port: ${{ vars.REMOTE_PORT }}
+          ssh_host: ${{ vars.SSH_HOST }}
           source: ./dist
           target: /srv/www/my-site
           releases_to_keep: 5
@@ -132,7 +126,7 @@ jobs:
 
 ```yaml
       - name: Deploy
-        uses: sanwv/deploy-action@v1
+        uses: sanwv/deploy-action@v2
         with:
           # 为简洁起见，省略其他必填参数。
           shared_items: |
@@ -196,11 +190,9 @@ type=file,path=assets/managed-manifest.json,mode=644,from=shared-seed/manifest.j
 |---|---:|---:|---|
 | `ssh_private_key` | 是 | — | SSH 私钥，请通过 GitHub Secret 传入。 |
 | `ssh_known_hosts` | 否 | 空 | 经过核验的 SSH host key；留空时使用 `accept-new` 接受并记录新 host key。 |
-| `remote_host` | 是 | — | 远端主机名或 IP 地址。 |
-| `remote_user` | 是 | — | SSH 登录用户。 |
+| `ssh_host` | 是 | — | SSH 连接目标，格式为 `user@host` 或 `user@host:port`，默认端口为 `22`；IPv6 地址使用方括号。 |
 | `source` | 是 | — | Runner 上已构建文件目录。 |
 | `target` | 是 | — | 远端部署根目录。 |
-| `remote_port` | 否 | `22` | SSH 端口。 |
 | `releases_to_keep` | 否 | `5` | 发布后保留的 release 数量，允许 `1` 到 `100`；活动版本始终保留。 |
 | `shared_items` | 否 | 空 | shared 路径、权限和文件同步配置。 |
 | `script_before` | 否 | 空 | 在远端创建新 release 前执行的 Bash 脚本。 |
@@ -241,7 +233,7 @@ type=file,path=assets/managed-manifest.json,mode=644,from=shared-seed/manifest.j
 
 **rsync 或权限错误**
 
-确认 Runner 和服务器都安装了 rsync，并确认 `REMOTE_USER` 可以写入 `TARGET`。Action 不使用 `sudo`。
+确认 Runner 和服务器都安装了 rsync，并确认 `SSH_HOST` 中的 SSH 用户可以写入 `TARGET`。Action 不使用 `sudo`。
 
 **应用找不到 shared 文件**
 

@@ -57,13 +57,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: sanwv/rollback-action@v1
+      - uses: sanwv/rollback-action@v2
         with:
           ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
           ssh_known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
-          remote_host: ${{ vars.REMOTE_HOST }}
-          remote_user: ${{ vars.REMOTE_USER }}
-          remote_port: ${{ vars.REMOTE_PORT }}
+          ssh_host: ${{ vars.SSH_HOST }}
           target: /srv/www/my-site
           steps: 1
 ```
@@ -78,9 +76,7 @@ In your repository, open **Settings → Secrets and variables → Actions** and 
 |---|---|---|
 | `SSH_PRIVATE_KEY` | Secret | Private key authorized to log in to the deployment server. |
 | `SSH_KNOWN_HOSTS` | Optional secret or variable | Verified host key for the deployment server, in `known_hosts` format. If omitted, SSH uses `accept-new` and saves the first key in the runner's user known_hosts file. |
-| `REMOTE_HOST` | Variable | Server hostname or IP address. |
-| `REMOTE_USER` | Variable | SSH login user. |
-| `REMOTE_PORT` | Optional variable | SSH port. Defaults to `22`. |
+| `SSH_HOST` | Variable | SSH target, e.g. `deploy@example.com:2222`; port defaults to `22`. |
 
 When configured, verify the server host key through a trusted channel before adding it; the Action then requires an exact match. When omitted, SSH accepts and stores a previously unseen key, while still rejecting a changed key already in known_hosts.
 
@@ -109,14 +105,12 @@ jobs:
           npm run build
 
       - name: Deploy
-        uses: sanwv/deploy-action@v1
+        uses: sanwv/deploy-action@v2
         with:
           ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
           # Optional: without this input, SSH uses StrictHostKeyChecking=accept-new.
           ssh_known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
-          remote_host: ${{ vars.REMOTE_HOST }}
-          remote_user: ${{ vars.REMOTE_USER }}
-          remote_port: ${{ vars.REMOTE_PORT }}
+          ssh_host: ${{ vars.SSH_HOST }}
           source: ./dist
           target: /srv/www/my-site
           releases_to_keep: 5
@@ -132,7 +126,7 @@ Use `shared_items` for data that must persist across releases, such as user uplo
 
 ```yaml
       - name: Deploy
-        uses: sanwv/deploy-action@v1
+        uses: sanwv/deploy-action@v2
         with:
           # Other required inputs omitted for brevity.
           shared_items: |
@@ -196,11 +190,9 @@ On each deployment, the Action updates the shared file from `GITHUB_WORKSPACE/sh
 |---|---:|---:|---|
 | `ssh_private_key` | Yes | — | SSH private key. Pass it as a GitHub Secret. |
 | `ssh_known_hosts` | No | Empty | Verified SSH host key. If empty, SSH accepts and records new host keys (`accept-new`). |
-| `remote_host` | Yes | — | Remote hostname or IP address. |
-| `remote_user` | Yes | — | SSH login user. |
+| `ssh_host` | Yes | — | SSH target: `user@host` or `user@host:port` (default port `22`; bracket IPv6 addresses). |
 | `source` | Yes | — | Prebuilt files directory on the runner. |
 | `target` | Yes | — | Remote deployment root directory. |
-| `remote_port` | No | `22` | SSH port. |
 | `releases_to_keep` | No | `5` | Number of releases to retain after deployment (`1`–`100`). The active release is always retained. |
 | `shared_items` | No | Empty | Shared paths, permissions, and file synchronization rules. |
 | `script_before` | No | Empty | Bash script run remotely before creating a release. |
@@ -241,7 +233,7 @@ Check that `SSH_KNOWN_HOSTS` contains the key for the host and port being used. 
 
 **rsync or permission errors**
 
-Confirm that rsync is installed on both the runner and server, and that `REMOTE_USER` can write to `TARGET`. The Action does not use `sudo`.
+Confirm that rsync is installed on both the runner and server, and that the SSH user in `SSH_HOST` can write to `TARGET`. The Action does not use `sudo`.
 
 **The application cannot find a shared file**
 

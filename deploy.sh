@@ -9,12 +9,19 @@ source_input=${INPUT_SOURCE:?source is required}
 if [[ "$source_input" = /* ]]; then source_dir=$source_input; else source_dir=$workspace/$source_input; fi
 [[ -d "$source_dir" ]] || fail "source directory does not exist: $source_input"
 source_dir=$(cd -- "$source_dir" && pwd -P)
-host=${INPUT_REMOTE_HOST:?remote_host is required}; user=${INPUT_REMOTE_USER:?remote_user is required}
-port=${INPUT_REMOTE_PORT:-22}; target=${INPUT_TARGET:?target is required}; keep=${INPUT_RELEASES_TO_KEEP:-5}
-[[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] && ((port <= 65535)) || fail 'remote_port must be between 1 and 65535'
+ssh_host=${INPUT_SSH_HOST:?ssh_host is required}
+if [[ "$ssh_host" =~ ^([A-Za-z0-9._-]+)@\[([A-Fa-f0-9:.]+)\](:([0-9]+))?$ ]]; then
+  user=${BASH_REMATCH[1]}; host=${BASH_REMATCH[2]}; port=${BASH_REMATCH[4]:-22}
+  rsync_host="[$host]"
+elif [[ "$ssh_host" =~ ^([A-Za-z0-9._-]+)@([A-Za-z0-9._-]+)(:([0-9]+))?$ ]]; then
+  user=${BASH_REMATCH[1]}; host=${BASH_REMATCH[2]}; port=${BASH_REMATCH[4]:-22}
+  rsync_host=$host
+else
+  fail 'ssh_host must be user@host or user@host:port (use brackets for IPv6)'
+fi
+[[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] && ((port <= 65535)) || fail 'ssh_host port must be between 1 and 65535'
+target=${INPUT_TARGET:?target is required}; keep=${INPUT_RELEASES_TO_KEEP:-5}
 [[ "$keep" =~ ^[0-9]+$ ]] && ((keep >= 1 && keep <= 100)) || fail 'releases_to_keep must be between 1 and 100'
-[[ "$host" =~ ^[A-Za-z0-9._:-]+$ ]] || fail 'remote_host contains unsupported characters'
-[[ "$user" =~ ^[A-Za-z0-9._-]+$ ]] || fail 'remote_user contains unsupported characters'
 [[ "$target" = /* && "$target" != / && "$target" =~ ^/[A-Za-z0-9._/-]+$ ]] || fail 'target must be an absolute path containing only letters, digits, dot, underscore, slash, and hyphen'
 [[ "$target" != *'/../'* && "$target" != */.. && "$target" != */./* && "$target" != */. ]] || fail 'target may not contain dot path components'
 
@@ -42,7 +49,7 @@ upload_hook() {
   [[ -n "$body" ]] || { printf ''; return 0; }
   path="$target/.deploy-action-hook-$release_id-$name"
   printf '%s\n' "$body" > "$tmpdir/hook-$name"
-  rsync -a -e "$rsync_ssh" -- "$tmpdir/hook-$name" "$user@$host:$path"
+  rsync -a -e "$rsync_ssh" -- "$tmpdir/hook-$name" "$user@$rsync_host:$path"
   printf '%s' "$path"
 }
 
@@ -170,8 +177,8 @@ before_hook=$(upload_hook before "${INPUT_SCRIPT_BEFORE:-}")
 run_remote_hook before "$before_hook" "$target" "$previous_release"
 ssh_run mkdir -p -- "$target/releases/$release_id"
 rsync_path="flock -x $target/.deploy.lock bash -c 'rsync \"\$@\" && cp -a -- \"$remote_cache/.\" \"$target/releases/$release_id/\"' deploy-rsync"
-rsync -a --delete --checksum --compress --rsync-path="$rsync_path" -e "$rsync_ssh" -- "$source_dir/" "$user@$host:$remote_cache/"
-rsync -a -e "$rsync_ssh" -- "$records" "$user@$host:$remote_records"
+rsync -a --delete --checksum --compress --rsync-path="$rsync_path" -e "$rsync_ssh" -- "$source_dir/" "$user@$rsync_host:$remote_cache/"
+rsync -a -e "$rsync_ssh" -- "$records" "$user@$rsync_host:$remote_records"
 
 prepare_shared=$(cat <<'REMOTE'
 set -Eeuo pipefail
@@ -213,7 +220,7 @@ REMOTE
     state=$(ssh_run bash -s -- "$target" "$path" <<< "$exists_script")
     [[ "$state" == PRESENT ]] && continue
   fi
-  rsync -a -e "$rsync_ssh" -- "$workspace/$from" "$user@$host:$remote_tmp"
+  rsync -a -e "$rsync_ssh" -- "$workspace/$from" "$user@$rsync_host:$remote_tmp"
   finish_sync=$(cat <<'REMOTE'
 set -Eeuo pipefail
 target=$1; path=$2; tmp=$3; sync=$4; mode=$5; dest="$target/shared/$path"
