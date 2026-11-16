@@ -188,6 +188,17 @@ type=file,path=assets/managed-manifest.json,mode=644,from=shared-seed/manifest.j
 
 ## 输入参数
 
+使用 `exclude` 排除不需要发布的文件，每行一条 rsync 排除规则，空行会被忽略：
+
+```yaml
+exclude: |
+  *.map
+  /config/local.json
+  /uploads/
+```
+
+规则相对于 `source` 目录；以 `/` 开头的规则从该目录根部匹配，`*.map` 匹配各级目录中的同名模式。规则使用 rsync 语法，不会自动读取 `.gitignore`。被排除的文件也会从远端同步缓存中删除，因此不会出现在新 release 中；已有 release 和 shared 文件不受影响。
+
 | 输入 | 必需 | 默认值 | 说明 |
 |---|---:|---:|---|
 | `ssh_private_key` | 是 | — | SSH 私钥，请通过 GitHub Secret 传入。 |
@@ -195,6 +206,7 @@ type=file,path=assets/managed-manifest.json,mode=644,from=shared-seed/manifest.j
 | `ssh_host` | 是 | — | SSH 连接目标，格式为 `user@host` 或 `user@host:port`，默认端口为 `22`；IPv6 地址使用方括号。 |
 | `source` | 是 | — | Runner 上已构建文件目录。 |
 | `target` | 是 | — | 远端部署根目录。 |
+| `exclude` | 否 | 空 | 每行一条相对于 `source` 的 rsync 排除规则。 |
 | `releases_to_keep` | 否 | `5` | 发布后保留的 release 数量，允许 `1` 到 `100`；活动版本始终保留。 |
 | `shared_items` | 否 | 空 | shared 路径、权限和文件同步配置。 |
 | `script_before` | 否 | 空 | 在远端同步新 release 前执行的 Bash 脚本。 |

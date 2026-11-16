@@ -188,6 +188,17 @@ On each deployment, the Action updates the shared file from `GITHUB_WORKSPACE/sh
 
 ## Inputs
 
+Use `exclude` to omit files from deployment, with one rsync exclude pattern per line. Empty lines are ignored:
+
+```yaml
+exclude: |
+  *.map
+  /config/local.json
+  /uploads/
+```
+
+Patterns are relative to `source`; a leading `/` anchors a pattern at its root, while `*.map` matches at any depth. Patterns use rsync syntax; `.gitignore` is not read automatically. Excluded files are also removed from the remote synchronization cache, so they do not appear in the new release. Existing releases and shared files are unaffected.
+
 | Input | Required | Default | Description |
 |---|---:|---:|---|
 | `ssh_private_key` | Yes | — | SSH private key. Pass it as a GitHub Secret. |
@@ -195,6 +206,7 @@ On each deployment, the Action updates the shared file from `GITHUB_WORKSPACE/sh
 | `ssh_host` | Yes | — | SSH target: `user@host` or `user@host:port` (default port `22`; bracket IPv6 addresses). |
 | `source` | Yes | — | Prebuilt files directory on the runner. |
 | `target` | Yes | — | Remote deployment root directory. |
+| `exclude` | No | Empty | One rsync exclude pattern relative to `source` per line. |
 | `releases_to_keep` | No | `5` | Number of releases to retain after deployment (`1`–`100`). The active release is always retained. |
 | `shared_items` | No | Empty | Shared paths, permissions, and file synchronization rules. |
 | `script_before` | No | Empty | Bash script run remotely before synchronizing a release. |

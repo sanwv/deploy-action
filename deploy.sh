@@ -14,6 +14,12 @@ source_input=${INPUT_SOURCE:?source is required}
 if [[ "$source_input" = /* ]]; then source_dir=$source_input; else source_dir=$workspace/$source_input; fi
 [[ -d "$source_dir" ]] || fail "source directory does not exist: $source_input"
 source_dir=$(cd -- "$source_dir" && pwd -P)
+exclude_args=()
+while IFS= read -r pattern || [[ -n "$pattern" ]]; do
+  [[ -n "$pattern" ]] || continue
+  [[ "$pattern" != *$'\r'* ]] || fail 'exclude patterns may not contain carriage returns'
+  exclude_args+=("--exclude=$pattern")
+done <<< "${INPUT_EXCLUDE:-}"
 ssh_host=${INPUT_SSH_HOST:?ssh_host is required}
 if [[ "$ssh_host" =~ ^([A-Za-z0-9._-]+)@\[([A-Fa-f0-9:.]+)\](:([0-9]+))?$ ]]; then
   user=${BASH_REMATCH[1]}; host=${BASH_REMATCH[2]}; port=${BASH_REMATCH[4]:-22}
@@ -193,7 +199,7 @@ run_remote_hook before "$before_hook" "$target" "$previous_release"
 stage_end
 stage_begin 'rsync and release copy'
 rsync_path="flock -x $target/.deploy.lock bash -c 'rsync \"\$@\" && { SECONDS=0; cp -a --no-preserve=ownership -- \"$remote_cache/.\" \"$target/releases/$release_id/\" && printf \"deploy-action: remote release copy completed in %ss\\n\" \"\$SECONDS\" >&2; }' deploy-rsync"
-rsync -a --no-owner --no-group --delete --compress --stats --rsync-path="$rsync_path" -e "$rsync_ssh" -- "$source_dir/" "$user@$rsync_host:$remote_cache/"
+rsync -a --no-owner --no-group --delete --delete-excluded --compress --stats "${exclude_args[@]}" --rsync-path="$rsync_path" -e "$rsync_ssh" -- "$source_dir/" "$user@$rsync_host:$remote_cache/"
 stage_end
 stage_begin 'shared items'
 rsync -a --no-owner --no-group -e "$rsync_ssh" -- "$records" "$user@$rsync_host:$remote_records"

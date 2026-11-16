@@ -21,6 +21,10 @@ inputs:
   target:
     description: Remote deployment root directory
     required: true
+  exclude:
+    description: Multiline rsync exclude patterns relative to source
+    required: false
+    default: ''
   releases_to_keep:
     description: Number of releases to retain, including the active release (1-100)
     required: false
@@ -52,6 +56,7 @@ runs:
         INPUT_SSH_HOST: ${{ inputs.ssh_host }}
         INPUT_SOURCE: ${{ inputs.source }}
         INPUT_TARGET: ${{ inputs.target }}
+        INPUT_EXCLUDE: ${{ inputs.exclude }}
         INPUT_RELEASES_TO_KEEP: ${{ inputs.releases_to_keep }}
         INPUT_SHARED_ITEMS: ${{ inputs.shared_items }}
         INPUT_SCRIPT_BEFORE: ${{ inputs.script_before }}
